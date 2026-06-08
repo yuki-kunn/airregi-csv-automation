@@ -91,12 +91,20 @@ def parse_cookies(raw: str) -> list[dict]:
     lines = [ln for ln in raw.splitlines() if ln.strip()]
     cookies: list[dict] = []
     header = None
+    # DevToolsのCookies表の既定列順（ヘッダ無しでコピーされた場合に使用）
+    # Name, Value, Domain, Path, Expires/Max-Age, Size, HttpOnly, Secure, ...
+    DEVTOOLS_COLS = ["name", "value", "domain", "path", "expiry"]
+
     for i, line in enumerate(lines):
         cols = line.split("\t") if "\t" in line else line.split(",")
         cols = [c.strip() for c in cols]
+
+        # 1行目がヘッダ行か判定
         if i == 0 and any(h.lower() in ("name", "cookie") for h in cols):
             header = [c.lower() for c in cols]
             continue
+
+        # ヘッダ付きテーブル
         if header:
             row = dict(zip(header, cols))
             name = row.get("name") or row.get("cookie")
@@ -112,18 +120,31 @@ def parse_cookies(raw: str) -> list[dict]:
                     }
                 )
             )
-        else:
-            # ヘッダ無し: "name=value" 形式の素朴なフォールバック
-            if "=" in line:
-                name, _, value = line.partition("=")
-                cookies.append(
-                    _normalize_cookie(
-                        {
-                            "name": name.strip(),
-                            "value": value.strip().rstrip(";").strip(),
-                        }
-                    )
+        # タブ区切りで3列以上 → ヘッダ無しDevTools表として固定列で解釈
+        elif "\t" in line and len(cols) >= 3:
+            row = dict(zip(DEVTOOLS_COLS, cols))
+            name = row.get("name", "")
+            if not name:
+                continue
+            expiry = row.get("expiry", "")
+            # "セッション"/"Session" 等はexpiryなし扱い
+            if expiry and expiry.lower() not in ("session", "セッション"):
+                # ISO日時(2027-05-14T...)はそのまま渡し _normalize_cookie で無視させる
+                row["expiry"] = "" if "T" in expiry or "-" in expiry else expiry
+            else:
+                row["expiry"] = ""
+            cookies.append(_normalize_cookie(row))
+        # "name=value" 形式の素朴なフォールバック
+        elif "=" in line:
+            name, _, value = line.partition("=")
+            cookies.append(
+                _normalize_cookie(
+                    {
+                        "name": name.strip(),
+                        "value": value.strip().rstrip(";").strip(),
+                    }
                 )
+            )
     return cookies
 
 
