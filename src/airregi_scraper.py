@@ -260,6 +260,7 @@ def download_csv(date_str: str) -> str:
             except Exception:  # noqa: BLE001
                 continue
         if not clicked:
+            _dump_page_diagnostics(driver)
             raise RuntimeError(
                 "CSVダウンロードボタンが見つかりませんでした（DOM変更の可能性）。"
                 "config.py のセレクタ更新が必要かもしれません。"
@@ -275,6 +276,75 @@ def download_csv(date_str: str) -> str:
         return target
     finally:
         driver.quit()
+
+
+def _dump_page_diagnostics(driver) -> None:
+    """CSVボタンが見つからない時、ページ構造をログ＆ファイルに出力する。
+
+    GitHub Actions では downloads/ をアーティファクトとして回収できる。
+    実際のDOMを見てセレクタを修正するための診断用。
+    """
+    try:
+        out_dir = config.DOWNLOAD_DIR
+        os.makedirs(out_dir, exist_ok=True)
+
+        logger.info("=== 診断: 現在URL = %s ===", driver.current_url)
+        logger.info("=== 診断: title = %s ===", driver.title)
+
+        # HTMLとスクリーンショットを保存
+        with open(os.path.join(out_dir, "debug_page.html"), "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        try:
+            driver.save_screenshot(os.path.join(out_dir, "debug_page.png"))
+        except Exception:  # noqa: BLE001
+            pass
+
+        # iframe があるかもしれない（AirREGIは iframe を使う画面がある）
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        logger.info("=== 診断: iframe数 = %d ===", len(iframes))
+
+        # 全ボタン・リンクのテキストを列挙
+        from selenium.webdriver.common.by import By as _By
+
+        for tag in ("a", "button"):
+            els = driver.find_elements(_By.TAG_NAME, tag)
+            logger.info("=== 診断: <%s> %d個 ===", tag, len(els))
+            for el in els[:40]:
+                try:
+                    txt = (el.text or "").strip().replace("\n", " ")
+                    href = el.get_attribute("href") or ""
+                    cls = el.get_attribute("class") or ""
+                    onclick = el.get_attribute("onclick") or ""
+                    if txt or href or onclick:
+                        logger.info(
+                            "   <%s> text=%r href=%r class=%r onclick=%r",
+                            tag,
+                            txt[:40],
+                            href[:80],
+                            cls[:50],
+                            onclick[:60],
+                        )
+                except Exception:  # noqa: BLE001
+                    continue
+        # CSV/ダウンロードを含む要素を広く探す
+        kw = driver.find_elements(
+            _By.XPATH,
+            "//*[contains(text(),'CSV') or contains(text(),'ダウンロード') "
+            "or contains(text(),'出力') or contains(text(),'エクスポート')]",
+        )
+        logger.info("=== 診断: CSV/DL/出力 を含む要素 = %d個 ===", len(kw))
+        for el in kw[:20]:
+            try:
+                logger.info(
+                    "   %s text=%r class=%r",
+                    el.tag_name,
+                    (el.text or "").strip()[:40],
+                    (el.get_attribute("class") or "")[:50],
+                )
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception as e:  # noqa: BLE001
+        logger.warning("診断ダンプに失敗: %s", e)
 
 
 def main():

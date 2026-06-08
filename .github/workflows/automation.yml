@@ -47,3 +47,15 @@ jobs:
           IPO_UPLOAD_PASSWORD: ${{ secrets.IPO_UPLOAD_PASSWORD }}
           SCHEDULE_WINDOW_MINUTES: '10'
         run: python src/run.py
+
+      # 失敗時の診断ファイル（debug_page.html / .png）を回収
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-page
+          path: |
+            downloads/debug_page.html
+            downloads/debug_page.png
+          if-no-files-found: ignore
+          retention-days: 3
