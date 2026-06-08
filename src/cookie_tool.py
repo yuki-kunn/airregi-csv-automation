@@ -16,6 +16,7 @@ Enterを押す。Cookieが airregi_cookies.json に保存される。
 import json
 import logging
 import os
+import sys
 
 import config
 from browser import create_driver
@@ -43,11 +44,47 @@ def main():
         driver.get(config.AIRREGI_SALES_URL)
         print("\n========================================")
         print("ブラウザでAirREGIにログインしてください。")
-        print(f"  ID:   {config.AIRREGI_ID}")
-        print(f"  PASS: {config.AIRREGI_PASS}")
-        print("売上ページが表示されたら、ここで Enter を押してください。")
+        if config.AIRREGI_ID:
+            print(f"  ID:   {config.AIRREGI_ID}")
+        if config.AIRREGI_PASS:
+            print(f"  PASS: {config.AIRREGI_PASS}")
+        print("----------------------------------------")
+        print("売上ページに到達すると自動でCookieを保存します。")
+        print("（手動でEnterを押しても確定できます）")
+        print("中断する場合は Ctrl+C。")
         print("========================================\n")
-        input("ログイン完了後 Enter > ")
+
+        # 売上ページ到達を自動検知（Enter入力に依存しない）。
+        # ターミナルが選択モード(COPYMODE)でも確実に進む。
+        import select
+        import time
+
+        deadline = time.time() + 300  # 最大5分待つ
+        detected = False
+        while time.time() < deadline:
+            url = driver.current_url
+            on_login = (
+                config.AIRREGI_LOGIN_HOST in url or "/view/login" in url
+            )
+            if not on_login and "salesListByMenu" in url:
+                print(f"\n✅ 売上ページを検知しました: {url}")
+                detected = True
+                break
+            # 手動Enterでも抜けられるように標準入力を非ブロッキングで覗く。
+            # 端末(tty)のときだけ有効化（/dev/null等のEOF誤発火を防ぐ）。
+            if sys.stdin.isatty():
+                ready, _, _ = select.select([sys.stdin], [], [], 2)
+                if ready:
+                    line = sys.stdin.readline()
+                    if line:  # EOFでない実入力のみ確定
+                        print("\n⏎ 手動確定を受け付けました。")
+                        detected = True
+                        break
+            else:
+                time.sleep(2)
+
+        if not detected:
+            print("\n⚠ タイムアウト（5分）。現在の状態でCookieを保存します。")
 
         # airregi.jp / connect.airregi.jp 両方のCookieを集める
         all_cookies = []
