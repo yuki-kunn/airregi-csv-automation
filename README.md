@@ -71,20 +71,25 @@ cat service-account.json | base64 -w0
 # → FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY に設定
 ```
 
-### 3. AirREGI Cookie の取得（初回・手動）
+### 3. AirREGI Cookie の登録（admin画面から / 推奨）
 
 AirREGIは Recruit ID / OAuth ログインで、自動ログインは CAPTCHA / 2段階認証で
-詰まるリスクが高い。そのため **一度だけ人がブラウザでログインして Cookie を保存** する。
+詰まるリスクが高い。そのため **一度だけ人がブラウザでログインして Cookie を登録** する。
+登録は **admin画面 `/admin` の「AirREGI ログインCookie」** から行う（Firestoreに保存され、
+run.py が自動で読む）。
 
-```bash
-HEADLESS=false python src/cookie_tool.py
-```
+**手順（Windowsの普段使いブラウザでOK・WSLのGUI不要）:**
 
-→ ブラウザが開くので手動でAirREGIにログイン。
-売上ページが出たらターミナルで Enter。出力された1行を
-GitHub Secrets `AIRREGI_COOKIES` に貼り付ける。
+1. [AirREGI売上ページ](https://airregi.jp/CLP/view/salesListByMenu/) を開いてログイン
+2. `F12`（開発者ツール）→「Application」タブ →「Cookies」
+3. `https://airregi.jp` と `https://connect.airregi.jp` の両方の行を全選択コピー
+4. admin画面 `/admin` の「AirREGI ログインCookie」欄に貼り付けて「保存」
 
-> Cookieが失効すると `failed` ログが出るので、その時は再度このコマンドで更新する。
+> Cookie-Editor 等の拡張機能でエクスポートした **JSON配列**も貼り付け可能。
+> Cookieが失効すると `failed` ログが出るので、その時は同じ手順で再登録する。
+
+> **代替（WSL GUIが使える場合）**: `HEADLESS=false python src/cookie_tool.py` で
+> ブラウザログイン → 出力JSONを admin画面 or `AIRREGI_COOKIES` に設定。
 
 ### 4. GitHub Secrets
 
@@ -94,8 +99,10 @@ GitHub Secrets `AIRREGI_COOKIES` に貼り付ける。
 |---|---|
 | `FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY` | サービスアカウントJSON(Base64) |
 | `FIREBASE_ADMIN_PROJECT_ID` | `ipo-kaidashi` |
-| `AIRREGI_COOKIES` | cookie_tool.py の出力(JSON 1行) |
 | `IPO_UPLOAD_PASSWORD` | 投入先のログインパスワード |
+
+> **Cookieは Secrets 不要**: admin画面から Firestore に登録するため、
+> `AIRREGI_COOKIES` の Secret 登録は任意（ローカル実行時のフォールバック用）。
 
 ### 5. デプロイ
 

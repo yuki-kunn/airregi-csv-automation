@@ -51,3 +51,38 @@ Cookie を取得し、`AIRREGI_COOKIES`（Secrets/.env）に保存する。
 
 > ⚠ 同じログイン/CAPTCHAエラーが繰り返し再現してループしそうな場合は
 > 作業を中断し、状況を簡潔に報告する方針（ユーザー要望）。
+
+---
+
+## 5. cookie_tool.py のブラウザが開かない / 「COPYMODE」表示
+
+**症状**: `HEADLESS=false python src/cookie_tool.py` でブラウザが画面に出ない、
+またはターミナルに「COPYMODE」と出てEnterが効かない。
+
+**原因**:
+- 「COPYMODE」は**ターミナル（Windows Terminal / tmux）の選択モード**表示で、
+  Chromeのエラーではない。選択モード中はキー入力(Enter)が効かない。
+- WSLからGUIを出すには WSLg が必要。環境によってはウィンドウが
+  Windows画面に転送されないことがある。
+
+**対処（推奨・GUI不要）**: **admin画面 `/admin` の「AirREGI ログインCookie」**から
+DevToolsでコピーしたCookieを貼り付けて登録する方式に変更した。
+WindowsのChromeでログイン → F12 → Application > Cookies をコピー → 貼り付け → 保存。
+Cookieは Firestore `automation/config.airregiCookies` に保存され、
+`airregi_scraper.py._load_cookies()` が Firestore → 環境変数 → ファイルの順で読む。
+
+**cookie_tool.py 自体の改善**: Enter入力に依存せず、売上ページ到達を
+URLポーリングで自動検知するように変更（COPYMODEでも確実に進む）。
+
+---
+
+## 6. Cookie登録APIが Forbidden になる
+
+**症状**: `/api/automation/cookies` への POST が
+`{"error":"Forbidden","message":"リクエストが拒否されました"}`。
+
+**原因**: 既存の `hooks.server.ts` のCSRF保護が Origin/Referer をチェックしている。
+curl等でOriginヘッダー無しのPOSTは弾かれる（仕様通り・他APIと同じ）。
+
+**対処**: ブラウザのfetchは自動でOriginを付けるため、admin画面からの操作では問題なし。
+検証時にcurlを使う場合は `-H "Origin: <自サイト>"` を付ける。

@@ -79,6 +79,16 @@ def clear_force_run() -> None:
     update_config({"forceRun": False})
 
 
+def get_cookies() -> str:
+    """automation/config.airregiCookies（CookieのJSON文字列）を返す。
+
+    admin画面でDevToolsから貼り付けたCookieがここに入る。
+    未設定なら空文字を返す（呼び出し側で環境変数等にフォールバック）。
+    """
+    cfg = get_config()
+    return cfg.get("airregiCookies", "") or ""
+
+
 def add_log(
     status: str,
     *,

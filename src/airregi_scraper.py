@@ -31,9 +31,28 @@ class LoginExpiredError(RuntimeError):
 
 
 def _load_cookies() -> list[dict]:
-    raw = config.AIRREGI_COOKIES_JSON
+    """Cookieを取得する。優先順位:
+    1. Firestore automation/config.airregiCookies（admin画面で登録）
+    2. 環境変数 AIRREGI_COOKIES
+    3. ローカルファイル airregi_cookies.json
+    """
+    raw = ""
+    # 1. Firestore（admin画面でDevToolsから登録したもの）
+    try:
+        import firestore_client as fs
+
+        raw = fs.get_cookies()
+        if raw:
+            logger.info("CookieをFirestoreから読み込みました")
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Firestoreからのcookie取得をスキップ: %s", e)
+
+    # 2. 環境変数
     if not raw:
-        # ローカルファイルからのフォールバック
+        raw = config.AIRREGI_COOKIES_JSON
+
+    # 3. ローカルファイル
+    if not raw:
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "airregi_cookies.json",
@@ -41,11 +60,89 @@ def _load_cookies() -> list[dict]:
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
                 raw = f.read()
-    if not raw:
+
+    if not raw or not raw.strip():
         raise LoginExpiredError(
-            "AIRREGI_COOKIES が未設定です。cookie_tool.py でCookieを取得してください。"
+            "AirREGIのCookieが未登録です。admin画面の「Cookie登録」から登録してください。"
         )
-    return json.loads(raw)
+    return parse_cookies(raw)
+
+
+def parse_cookies(raw: str) -> list[dict]:
+    """貼り付けられたCookieを正規化する。
+
+    対応形式:
+      - JSON配列（Cookie-Editor / cookie_tool.py の出力）
+      - DevTools "Application > Cookies" の表をコピーしたタブ区切りテキスト
+        （1行目ヘッダ: Name<TAB>Value<TAB>Domain<TAB>Path ...）
+    """
+    raw = raw.strip()
+    if not raw:
+        return []
+
+    # JSON形式を優先
+    if raw[0] in "[{":
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = [data]
+        return [_normalize_cookie(c) for c in data if c.get("name")]
+
+    # タブ/カンマ区切りテーブル
+    lines = [ln for ln in raw.splitlines() if ln.strip()]
+    cookies: list[dict] = []
+    header = None
+    for i, line in enumerate(lines):
+        cols = line.split("\t") if "\t" in line else line.split(",")
+        cols = [c.strip() for c in cols]
+        if i == 0 and any(h.lower() in ("name", "cookie") for h in cols):
+            header = [c.lower() for c in cols]
+            continue
+        if header:
+            row = dict(zip(header, cols))
+            name = row.get("name") or row.get("cookie")
+            if not name:
+                continue
+            cookies.append(
+                _normalize_cookie(
+                    {
+                        "name": name,
+                        "value": row.get("value", ""),
+                        "domain": row.get("domain", ""),
+                        "path": row.get("path", "/"),
+                    }
+                )
+            )
+        else:
+            # ヘッダ無し: "name=value" 形式の素朴なフォールバック
+            if "=" in line:
+                name, _, value = line.partition("=")
+                cookies.append(
+                    _normalize_cookie(
+                        {
+                            "name": name.strip(),
+                            "value": value.strip().rstrip(";").strip(),
+                        }
+                    )
+                )
+    return cookies
+
+
+def _normalize_cookie(c: dict) -> dict:
+    """add_cookie に渡せる最小フィールドへ整える。"""
+    out = {
+        "name": c["name"],
+        "value": c.get("value", ""),
+        "path": c.get("path", "/") or "/",
+    }
+    if c.get("domain"):
+        out["domain"] = c["domain"]
+    expiry = c.get("expiry") or c.get("expirationDate") or c.get("expires")
+    if expiry:
+        try:
+            out["expiry"] = int(float(expiry))
+        except (ValueError, TypeError):
+            pass
+    return out
 
 
 def _inject_cookies(driver, cookies: list[dict]) -> None:
@@ -61,7 +158,9 @@ def _inject_cookies(driver, cookies: list[dict]) -> None:
 def _safe_add(driver, cookies: list[dict], suffix: str) -> None:
     for c in cookies:
         domain = (c.get("domain") or "").lstrip(".")
-        if suffix not in domain:
+        # domainが指定されている場合のみ suffix で絞り込む。
+        # domainが空（DevTools表でdomain列が無い等）は現在のオリジン用として注入。
+        if domain and suffix not in domain:
             continue
         cookie = {
             "name": c["name"],
