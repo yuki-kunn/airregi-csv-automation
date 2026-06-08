@@ -243,10 +243,14 @@ def download_csv(date_str: str) -> str:
         # AirREGIの売上ページのDLリンクは表記揺れがあるため複数候補で探索。
         wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
         candidates = [
-            (By.XPATH, "//a[contains(text(),'CSV')]"),
-            (By.XPATH, "//button[contains(text(),'CSV')]"),
-            (By.XPATH, "//a[contains(text(),'ダウンロード')]"),
-            (By.XPATH, "//button[contains(text(),'ダウンロード')]"),
+            # 実DOM確認済みの確定セレクタ（最優先）
+            (By.CSS_SELECTOR, config.AIRREGI_CSV_BUTTON_CSS),
+            (By.XPATH, "//button[contains(.,'CSV') and contains(.,'ダウンロード')]"),
+            (By.XPATH, "//*[contains(@class,'btn-CSV-DL')]"),
+            # フォールバック（DOM変更時の保険）
+            (By.XPATH, "//button[contains(.,'CSV')]"),
+            (By.XPATH, "//a[contains(.,'CSV')]"),
+            (By.XPATH, "//button[contains(.,'ダウンロード')]"),
             (By.CSS_SELECTOR, "a[href*='csv'], a[href*='download']"),
         ]
         clicked = False

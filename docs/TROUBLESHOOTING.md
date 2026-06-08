@@ -86,3 +86,28 @@ curl等でOriginヘッダー無しのPOSTは弾かれる（仕様通り・他API
 
 **対処**: ブラウザのfetchは自動でOriginを付けるため、admin画面からの操作では問題なし。
 検証時にcurlを使う場合は `-H "Origin: <自サイト>"` を付ける。
+
+---
+
+## 7. CSVダウンロードボタンが見つからない
+
+**症状**: ログインは成功（売上ページ「商品別売上 | Airレジ」に到達）するが、
+`CSVダウンロードボタンが見つかりませんでした` で失敗。
+
+**原因**: 推測で書いていたセレクタが実DOMと不一致。実際のボタンは:
+```html
+<button class="btn-CSV-DL pull-left menu-text ...">
+  <span class="download-text">商品単位の売上(CSV)をダウンロードする</span>
+</button>
+```
+ボタンのテキストが内側の `<span>` にあるため `button/text()` では一致しなかった。
+
+**対処**:
+- `config.AIRREGI_CSV_BUTTON_CSS = "button.btn-CSV-DL"` を最優先セレクタに。
+- XPathは `contains(text(),...)` → `contains(.,...)` に変更（子要素のテキストも対象）。
+- 診断機能を追加: ボタン未検出時に全リンク/ボタンのテキスト・classをログ出力し、
+  HTML/スクショを Actions アーティファクト(debug-page)として保存する。
+  → `_dump_page_diagnostics()` / workflow の Upload debug artifacts ステップ。
+
+**実DOM調査の方法**: `gh run view <id> --log | grep 診断` で要素一覧、
+Actions の Artifacts から debug_page.html / debug_page.png をダウンロード。

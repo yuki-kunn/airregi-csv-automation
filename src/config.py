@@ -42,6 +42,11 @@ SCHEDULE_WINDOW_MINUTES = int(os.environ.get("SCHEDULE_WINDOW_MINUTES", "10"))
 # ===== AirREGI（取得元） =====
 AIRREGI_SALES_URL = "https://airregi.jp/CLP/view/salesListByMenu/"
 AIRREGI_LOGIN_HOST = "connect.airregi.jp"  # ここに飛ばされたら未ログイン判定
+# CSVダウンロードボタン（実DOM確認済み）:
+#   <button class="btn-CSV-DL ...">
+#     <span class="download-text">商品単位の売上(CSV)をダウンロードする</span>
+#   </button>
+AIRREGI_CSV_BUTTON_CSS = "button.btn-CSV-DL"
 # Cookie再利用方式: cookie_tool.py で取得したCookie(JSON文字列)
 AIRREGI_COOKIES_JSON = os.environ.get("AIRREGI_COOKIES", "")
 # 認証情報はコードに埋めず .env / Secrets から注入する（publicリポ前提）
