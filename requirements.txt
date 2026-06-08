@@ -1,0 +1,4 @@
+selenium==4.27.1
+webdriver-manager==4.0.2
+firebase-admin==6.6.0
+python-dotenv==1.0.1

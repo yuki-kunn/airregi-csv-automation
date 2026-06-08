@@ -1,0 +1,49 @@
+name: AirREGI CSV 自動取込・アップロード
+
+on:
+  # 10分毎に起動し、Firestoreの scheduledTime と一致したときだけ実行する
+  # (cron は UTC。10分間隔なので時刻に関係なく回す)
+  schedule:
+    - cron: '*/10 * * * *'
+  # admin画面の「今すぐ実行」や手動確認用
+  workflow_dispatch:
+
+# 同時実行を防止（前回がまだ動いていたらスキップ）
+concurrency:
+  group: airregi-automation
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ubuntu-latest には Chrome が同梱されているが、明示的にセットアップして
+      # chromedriver のバージョン整合を保証する
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+
+      - name: Run automation
+        env:
+          HEADLESS: 'true'
+          FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_ADMIN_PROJECT_ID: ${{ secrets.FIREBASE_ADMIN_PROJECT_ID }}
+          AIRREGI_COOKIES: ${{ secrets.AIRREGI_COOKIES }}
+          IPO_UPLOAD_PASSWORD: ${{ secrets.IPO_UPLOAD_PASSWORD }}
+          SCHEDULE_WINDOW_MINUTES: '10'
+        run: python src/run.py
