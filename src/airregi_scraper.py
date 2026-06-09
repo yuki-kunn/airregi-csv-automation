@@ -239,9 +239,14 @@ def download_csv(date_str: str) -> str:
 
         before = set(glob.glob(os.path.join(download_dir, "*.csv")))
 
+        wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
+
+        # 集計単位を「バリエーション単位」に切り替えてから再表示する。
+        # （既定は商品単位。投入先はバリエーション別CSVを期待）
+        _select_variation_unit(driver, wait)
+
         # CSVダウンロードボタンを探してクリック。
         # AirREGIの売上ページのDLリンクは表記揺れがあるため複数候補で探索。
-        wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
         candidates = [
             # 実DOM確認済みの確定セレクタ（最優先）
             (By.CSS_SELECTOR, config.AIRREGI_CSV_BUTTON_CSS),
@@ -280,6 +285,47 @@ def download_csv(date_str: str) -> str:
         return target
     finally:
         driver.quit()
+
+
+def _select_variation_unit(driver, wait) -> None:
+    """集計単位を「バリエーション単位」(searchOrderBy=1)に切り替えて再表示する。
+
+    既定は商品単位(value=0)。ラジオを選び「表示する」を押して再集計させる。
+    要素が無い/変更済みでも致命的でないため、失敗は警告に留める。
+    """
+    import time
+
+    try:
+        radio = wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, config.AIRREGI_VARIATION_RADIO_CSS)
+            )
+        )
+        if radio.is_selected():
+            logger.info("既にバリエーション単位が選択済み")
+        else:
+            # ラベルが重なってクリックを奪うことがあるためJSで確実に選択
+            driver.execute_script("arguments[0].click();", radio)
+            logger.info("バリエーション単位ラジオを選択")
+
+        # 「表示する」で再集計
+        try:
+            search_btn = driver.find_element(
+                By.CSS_SELECTOR, config.AIRREGI_SEARCH_BUTTON_CSS
+            )
+            driver.execute_script("arguments[0].click();", search_btn)
+            logger.info("「表示する」をクリックして再集計")
+            # 再集計の描画を待つ（テーブル再構築の猶予）
+            time.sleep(3)
+            WebDriverWait(driver, config.PAGE_LOAD_TIMEOUT).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("「表示する」クリックに失敗（続行）: %s", e)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "バリエーション単位の切替に失敗（商品単位のまま続行の可能性）: %s", e
+        )
 
 
 def _dump_page_diagnostics(driver) -> None:

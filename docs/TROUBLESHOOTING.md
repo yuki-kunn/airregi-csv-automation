@@ -111,3 +111,23 @@ curl等でOriginヘッダー無しのPOSTは弾かれる（仕様通り・他API
 
 **実DOM調査の方法**: `gh run view <id> --log | grep 診断` で要素一覧、
 Actions の Artifacts から debug_page.html / debug_page.png をダウンロード。
+
+---
+
+## 8. 商品単位ではなくバリエーション単位のCSVが必要
+
+**要件**: 投入先はバリエーション別CSV（ファイル名も「バリエーション別売上_…」）を期待。
+だが商品別売上ページの既定は「商品単位」で、CSVボタンも1つだけ。
+
+**実DOM**: ページ上部に集計単位のラジオがある:
+```html
+<input type="radio" name="searchOrderBy" value="0" checked>  → 商品単位で表示
+<input type="radio" name="searchOrderBy" value="1">          → バリエーション単位で表示
+```
+CSVボタン名は「商品単位の売上(CSV)」のままだが、選択中の表示単位に応じた内容が出力される。
+
+**対処**: CSVダウンロード前に
+1. `input[name="searchOrderBy"][value="1"]` をJSクリックで選択
+2. `button.btn-search`（表示する）で再集計
+3. `button.btn-CSV-DL` でダウンロード
+→ `_select_variation_unit()` を `download_csv` に追加。

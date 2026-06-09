@@ -42,10 +42,18 @@ SCHEDULE_WINDOW_MINUTES = int(os.environ.get("SCHEDULE_WINDOW_MINUTES", "10"))
 # ===== AirREGI（取得元） =====
 AIRREGI_SALES_URL = "https://airregi.jp/CLP/view/salesListByMenu/"
 AIRREGI_LOGIN_HOST = "connect.airregi.jp"  # ここに飛ばされたら未ログイン判定
-# CSVダウンロードボタン（実DOM確認済み）:
+# 集計単位ラジオ（実DOM確認済み）:
+#   <input type="radio" name="searchOrderBy" value="0" checked>  → 商品単位
+#   <input type="radio" name="searchOrderBy" value="1">          → バリエーション単位
+# バリエーション別CSVが欲しいので value="1" を選択してから再表示する。
+AIRREGI_VARIATION_RADIO_CSS = 'input[name="searchOrderBy"][value="1"]'
+# 「表示する」ボタン（再集計）
+AIRREGI_SEARCH_BUTTON_CSS = "button.btn-search"
+# CSVダウンロードボタン:
 #   <button class="btn-CSV-DL ...">
 #     <span class="download-text">商品単位の売上(CSV)をダウンロードする</span>
 #   </button>
+# ※ ボタン名は「商品単位」表記だが、表示単位に応じた内容が出力される
 AIRREGI_CSV_BUTTON_CSS = "button.btn-CSV-DL"
 # Cookie再利用方式: cookie_tool.py で取得したCookie(JSON文字列)
 AIRREGI_COOKIES_JSON = os.environ.get("AIRREGI_COOKIES", "")
