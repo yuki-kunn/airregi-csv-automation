@@ -409,6 +409,24 @@ def _dump_calendar_diagnostics(driver, target_ym: str, target_day: int) -> None:
         logger.warning("カレンダー診断に失敗: %s", e)
 
 
+def _fire_full_click(driver, element) -> None:
+    """Reactの合成イベントを確実に発火させるネイティブイベント列を送る。"""
+    driver.execute_script(
+        """
+        const el = arguments[0];
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+        const opts = {bubbles:true, cancelable:true, view:window,
+                      clientX:cx, clientY:cy, button:0};
+        for (const type of ['pointerdown','mousedown','pointerup','mouseup','click']) {
+            const Ctor = type.startsWith('pointer') ? PointerEvent : MouseEvent;
+            el.dispatchEvent(new Ctor(type, opts));
+        }
+        """,
+        element,
+    )
+
+
 def _click_calendar_day(driver, target_dt) -> bool:
     """カレンダー上で対象日のセルをクリックする。年月ナビゲーション込み。
 
@@ -441,22 +459,14 @@ def _click_calendar_day(driver, target_dt) -> bool:
                 "対象月%s 日付セル(%s)候補: %d個", target_label, target_day, len(cells)
             )
             if cells:
-                # 親td をクリック対象にする（divよりtdの方がハンドラを持つことが多い）
-                td = cells[0].find_element(By.XPATH, "./..")
-                for target_el in (td, cells[0]):
-                    try:
-                        target_el.click()  # 実クリック
-                        logger.info("日付セルを実クリックしました")
-                        return True
-                    except Exception as e1:  # noqa: BLE001
-                        logger.info("実クリック失敗(%s)、JSクリック試行", e1)
-                        try:
-                            driver.execute_script("arguments[0].click();", target_el)
-                            logger.info("日付セルをJSクリックしました")
-                            return True
-                        except Exception:  # noqa: BLE001
-                            continue
-                return False
+                div_cell = cells[0]
+                td = div_cell.find_element(By.XPATH, "./..")
+                # Reactは合成イベントを使うため、ネイティブの
+                # pointer/mouse イベント列を発火しないと onClick が動かない。
+                _fire_full_click(driver, div_cell)
+                _fire_full_click(driver, td)
+                logger.info("日付セルにマウスイベント列を発火しました")
+                return True
             return False
 
         # 目的月へ移動。target が現在より過去なら « 、未来なら »
