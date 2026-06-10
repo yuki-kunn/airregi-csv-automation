@@ -57,5 +57,6 @@ jobs:
           path: |
             downloads/debug_page.html
             downloads/debug_page.png
+            downloads/debug_calendar.html
           if-no-files-found: ignore
           retention-days: 3

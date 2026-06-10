@@ -370,6 +370,17 @@ def _set_date_range(driver, wait, date_str: str) -> bool:
 def _dump_calendar_diagnostics(driver, target_ym: str, target_day: int) -> None:
     """カレンダーポップアップのDOM構造を診断ログに出す。"""
     try:
+        # カレンダー全体のHTMLをファイル保存（artifact回収用）
+        try:
+            cont = driver.find_elements(By.CSS_SELECTOR, "div.datepicker-container")
+            if cont:
+                path = os.path.join(config.DOWNLOAD_DIR, "debug_calendar.html")
+                os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(cont[0].get_attribute("outerHTML") or "")
+                logger.info("カレンダーHTMLを保存: %s", path)
+        except Exception:  # noqa: BLE001
+            pass
         # よくあるカレンダーのコンテナ候補を広く探す
         for sel in (
             "[class*='calendar']",
