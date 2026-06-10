@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import time
+from datetime import datetime
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -243,7 +244,16 @@ def download_csv(date_str: str) -> str:
 
         # 対象日を datepicker に設定（バリエーション切替前に行い、
         # _select_variation_unit 内の「表示する」でまとめて再集計させる）
-        _set_date_range(driver, wait, date_str)
+        date_ok = _set_date_range(driver, wait, date_str)
+
+        # 安全策: 日付が対象日に設定できなかった場合、当日データを誤った日付で
+        # 保存する事故を防ぐため中断する（無限ループ防止のため即失敗）。
+        if not date_ok:
+            _dump_page_diagnostics(driver)
+            raise RuntimeError(
+                f"対象日({date_str})をAirREGIの日付欄に設定できませんでした。"
+                "当日データを誤登録しないよう中断します。"
+            )
 
         # 集計単位を「バリエーション単位」に切り替えてから再表示する。
         # （既定は商品単位。投入先はバリエーション別CSVを期待）
@@ -291,42 +301,137 @@ def download_csv(date_str: str) -> str:
         driver.quit()
 
 
-def _set_date_range(driver, wait, date_str: str) -> None:
+def _set_date_range(driver, wait, date_str: str) -> bool:
     """datepicker に対象日(YYYY-MM-DD)を単日範囲として設定する。
 
-    AirREGIの日付入力は readonly のため send_keys 不可。
-    JSで value を "YYYY/MM/DD ~ YYYY/MM/DD" に書き換え、change/inputを発火する。
-    既定が当日なので、当日処理なら設定不要だが、明示設定で過去日も指定可能にする。
+    AirREGIの日付入力は readonly のカスタムウィジェット。value書換では
+    内部状態に反映されないため、カレンダーを開いて日付セルをクリックする。
+    単日選択なので同じ日を2回クリック（開始=終了）。
+
+    返り値: input value が対象日になったら True（設定成功）。
     """
     slash = date_str.replace("-", "/")
     range_value = f"{slash} ~ {slash}"
+    target_dt = datetime.strptime(date_str, "%Y-%m-%d")
+    target_day = target_dt.day
+    target_ym = f"{target_dt.year}年{target_dt.month}月"
+
     try:
         date_input = wait.until(
             EC.presence_of_element_located(
                 (By.CSS_SELECTOR, config.AIRREGI_DATE_INPUT_CSS)
             )
         )
-        current = date_input.get_attribute("value") or ""
-        if current.strip() == range_value:
+        current = (date_input.get_attribute("value") or "").strip()
+        if current == range_value:
             logger.info("日付は既に対象日: %s", range_value)
-            return
-        driver.execute_script(
-            """
-            const el = arguments[0], val = arguments[1];
-            const setter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value').set;
-            setter.call(el, val);
-            el.dispatchEvent(new Event('input', {bubbles: true}));
-            el.dispatchEvent(new Event('change', {bubbles: true}));
-            """,
-            date_input,
-            range_value,
-        )
-        logger.info("日付を設定: %s", range_value)
+            return True
+
+        # カレンダーを開く（input か icon をクリック）
+        try:
+            driver.execute_script("arguments[0].click();", date_input)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(1)
+        icon = driver.find_elements(By.CSS_SELECTOR, "div.input-date .regicon")
+        if icon:
+            try:
+                driver.execute_script("arguments[0].click();", icon[0])
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(1.5)
+
+        # カレンダーDOMを診断出力（構造特定用）
+        _dump_calendar_diagnostics(driver, target_ym, target_day)
+
+        # 目的の年月までナビゲートしつつ日付セルをクリック
+        clicked = _click_calendar_day(driver, target_dt)
+        if not clicked:
+            logger.warning(
+                "カレンダーで対象日セルをクリックできませんでした: %s", date_str
+            )
+            return False
+
+        time.sleep(1)
+        # 単日選択: 終了日も同じ日をクリック（範囲ピッカーの場合）
+        _click_calendar_day(driver, target_dt)
+        time.sleep(1)
+
+        # 反映確認: input value が対象日(単日範囲)になっているか
+        new_val = (date_input.get_attribute("value") or "").strip()
+        logger.info("日付クリック後の input value: %r (期待=%r)", new_val, range_value)
+        # 開始・終了とも対象日を含むか（範囲表記/単日表記どちらも許容）
+        return slash in new_val
     except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "日付設定に失敗（当日のまま続行の可能性）: %s", e
+        logger.warning("日付設定に失敗: %s", e)
+        return False
+
+
+def _dump_calendar_diagnostics(driver, target_ym: str, target_day: int) -> None:
+    """カレンダーポップアップのDOM構造を診断ログに出す。"""
+    try:
+        # よくあるカレンダーのコンテナ候補を広く探す
+        for sel in (
+            "[class*='calendar']",
+            "[class*='datepicker']",
+            "[class*='Calendar']",
+            "[role='dialog']",
+        ):
+            els = driver.find_elements(By.CSS_SELECTOR, sel)
+            for el in els[:2]:
+                html = (el.get_attribute("outerHTML") or "")[:600]
+                logger.info("=== 診断[cal %s]: %s", sel, html.replace("\n", " "))
+        # 表示中の年月ラベルらしき要素
+        heads = driver.find_elements(
+            By.XPATH, "//*[contains(text(),'年') and contains(text(),'月')]"
         )
+        for h in heads[:5]:
+            logger.info("   年月ラベル候補: %r", (h.text or "").strip()[:20])
+        # クリック可能な日付セル候補
+        cells = driver.find_elements(
+            By.XPATH,
+            f"//td[normalize-space(text())='{target_day}'] | "
+            f"//*[contains(@class,'day') and normalize-space(text())='{target_day}']",
+        )
+        logger.info("=== 診断: 日付セル候補(%d) = %d個", target_day, len(cells))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("カレンダー診断に失敗: %s", e)
+
+
+def _click_calendar_day(driver, target_dt) -> bool:
+    """カレンダー上で対象日のセルをクリックする。年月ナビゲーション込み。"""
+    import time
+
+    target_day = target_dt.day
+    # 最大12回まで「前月」ボタンで遡る（過去日想定）
+    for _ in range(12):
+        # 当月内の対象日セルを探す（disabledや別月のセルは除外したい）
+        cells = driver.find_elements(
+            By.XPATH,
+            f"//td[normalize-space(text())='{target_day}' and "
+            f"not(contains(@class,'disabled')) and not(contains(@class,'other'))]"
+            f" | //*[contains(@class,'day') and normalize-space(text())='{target_day}'"
+            f" and not(contains(@class,'disabled')) and not(contains(@class,'other'))]",
+        )
+        if cells:
+            try:
+                driver.execute_script("arguments[0].click();", cells[0])
+                return True
+            except Exception:  # noqa: BLE001
+                pass
+        # 前月へ（prevボタン候補を広く探す）
+        prev = driver.find_elements(
+            By.CSS_SELECTOR,
+            "[class*='prev'], [class*='Prev'], [aria-label*='前'], [class*='left']",
+        )
+        if not prev:
+            break
+        try:
+            driver.execute_script("arguments[0].click();", prev[0])
+            time.sleep(0.6)
+        except Exception:  # noqa: BLE001
+            break
+    return False
 
 
 def _select_variation_unit(driver, wait) -> None:
