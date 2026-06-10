@@ -131,3 +131,26 @@ CSVボタン名は「商品単位の売上(CSV)」のままだが、選択中の
 2. `button.btn-search`（表示する）で再集計
 3. `button.btn-CSV-DL` でダウンロード
 → `_select_variation_unit()` を `download_csv` に追加。
+
+---
+
+## 9. 指定日実行 + 天候自動登録（フェーズ2）
+
+**機能**: admin画面から日付を選んで過去日のCSVを取得、アップロード後に天候も登録。
+
+**指定日実行の仕組み**:
+- admin画面「指定日のデータを取得」→ `automation/config` に `{forceRun:true, runDate:"YYYY-MM-DD"}`
+- run.py の `_resolve_target_date()` が runDate を対象日に採用。成功/失敗後 `_consume_triggers()` で
+  forceRun/runDate をクリア（無限再試行防止）。指定日実行では lastRunDate は更新しない。
+- airregi_scraper の `_set_date_range()`: readonly datepicker の value を
+  `YYYY/MM/DD ~ YYYY/MM/DD` にJSで設定し input/change を発火 → btn-search で再集計。
+
+**天候登録の仕組み**:
+- uploader の `_register_weather()`: アップロード成功後、同ブラウザの `execute_async_script` で
+  サイト内 `/api/weather` → `/api/firestore/dailySales`(addOrUpdate) を叩く（CSRF/Origin自然通過）。
+- その日の dailySales が無い（0件）場合は天候登録スキップ。失敗は警告のみ。
+- 場所は `WEATHER_LOCATION="Izumi, Osaka, Japan"`。
+
+**注意**: datepicker の value 書換がウィジェット内部状態に反映されない場合は、
+debug_page.html を見てカレンダークリック方式へ切替が必要。
+天候APIは WeatherAPI.com 無料プランで履歴取得可（過去日OK、未来は3日先まで）。

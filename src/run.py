@@ -64,7 +64,10 @@ def should_run(cfg: dict, now: datetime) -> tuple[bool, str]:
 
 
 def run_pipeline(date_str: str) -> tuple[int, str]:
-    """取得→投入を実行し、(件数, 取得CSVパス) を返す。"""
+    """取得→投入を実行し、(件数, 取得CSVパス) を返す。
+
+    date_str: 対象日(YYYY-MM-DD)。CSV取得・天候登録ともこの日付を使う。
+    """
     from airregi_scraper import download_csv
     from uploader import upload_csv
 
@@ -72,8 +75,16 @@ def run_pipeline(date_str: str) -> tuple[int, str]:
     csv_path = download_csv(date_str)
 
     logger.info("投入先へアップロードします: %s", csv_path)
-    imported = upload_csv(csv_path)
+    imported = upload_csv(csv_path, sales_date=date_str)
     return imported, csv_path
+
+
+def _resolve_target_date(cfg: dict, today: str) -> str:
+    """対象日を決定する。runDate(指定日)があればそれ、無ければ当日。"""
+    run_date = (cfg.get("runDate") or "").strip()
+    if run_date:
+        return run_date
+    return today
 
 
 def main() -> int:
@@ -89,11 +100,16 @@ def main() -> int:
         fs.add_log("skipped", message=reason, stage="done", run_at_iso=run_at_iso)
         return 0
 
-    logger.info("実行します: %s", reason)
+    target_date = _resolve_target_date(cfg, today)
+    is_specified = target_date != today
+    if is_specified:
+        reason = f"{reason} / 指定日={target_date}"
+    logger.info("実行します: %s (対象日=%s)", reason, target_date)
+
     started = time.time()
     stage = "airregi"
     try:
-        imported, _ = run_pipeline(today)
+        imported, _ = run_pipeline(target_date)
         stage = "done"
         duration_ms = int((time.time() - started) * 1000)
         fs.add_log(
@@ -104,9 +120,10 @@ def main() -> int:
             stage=stage,
             run_at_iso=run_at_iso,
         )
-        fs.set_last_run_date(today)
-        if cfg.get("forceRun"):
-            fs.clear_force_run()
+        # 当日処理のときだけ lastRunDate を更新（指定日実行で当日扱いを汚さない）
+        if not is_specified:
+            fs.set_last_run_date(today)
+        _consume_triggers(cfg)
         logger.info("完了: %d件", imported)
         return 0
     except Exception as e:  # noqa: BLE001
@@ -121,10 +138,20 @@ def main() -> int:
             stage=stage,
             run_at_iso=run_at_iso,
         )
-        # forceRun での失敗時もフラグは下ろす（無限再試行を防ぐ）
-        if cfg.get("forceRun"):
-            fs.clear_force_run()
+        # forceRun/runDate での失敗時もフラグは下ろす（無限再試行を防ぐ）
+        _consume_triggers(cfg)
         return 1
+
+
+def _consume_triggers(cfg: dict) -> None:
+    """手動トリガ(forceRun)と指定日(runDate)を消費して下ろす。"""
+    updates = {}
+    if cfg.get("forceRun"):
+        updates["forceRun"] = False
+    if (cfg.get("runDate") or "").strip():
+        updates["runDate"] = ""
+    if updates:
+        fs.update_config(updates)
 
 
 if __name__ == "__main__":

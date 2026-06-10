@@ -38,10 +38,17 @@ def _inject_auth(driver) -> None:
     logger.info("localStorage認証フラグを注入しました")
 
 
-def upload_csv(csv_path: str) -> int:
-    """CSVをアップロードし、インポート件数を返す。"""
+def upload_csv(csv_path: str, sales_date: str | None = None) -> int:
+    """CSVをアップロードし、インポート件数を返す。
+
+    sales_date(YYYY-MM-DD)を渡すと、アップロード後にその日の天候を取得して
+    dailySalesに登録する（未指定ならファイル名から抽出を試みる）。
+    """
     if not os.path.exists(csv_path):
         raise FileNotFoundError(csv_path)
+
+    if not sales_date:
+        sales_date = _date_from_filename(csv_path)
 
     driver = create_driver()
     try:
@@ -95,18 +102,100 @@ def upload_csv(csv_path: str) -> int:
         m = re.search(r"(\d+)\s*件", text)
         imported = int(m.group(1)) if m else 0
         logger.info("アップロード成功: %s (%d件)", text, imported)
+
+        # 天候を取得して dailySales に登録（同じブラウザのfetchでサイト内APIを叩く）
+        if sales_date:
+            _register_weather(driver, sales_date)
+
         return imported
     finally:
         driver.quit()
+
+
+def _date_from_filename(csv_path: str) -> str | None:
+    """ファイル名から日付(YYYY-MM-DD)を抽出する。
+    例: バリエーション別売上_20260610-20260610.csv → 2026-06-10
+    """
+    m = re.search(r"(\d{4})(\d{2})(\d{2})", os.path.basename(csv_path))
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    return None
+
+
+def _register_weather(driver, sales_date: str) -> None:
+    """対象日の天候を /api/weather で取得し、dailySales に登録する。
+
+    投入先サイト内で実行する fetch なので CSRF/認証(Origin)は自然に通る。
+    天候は付加情報のため、失敗しても例外にせず警告に留める。
+    その日の dailySales が存在しない（0件）場合はスキップ。
+    """
+    script = """
+    const cb = arguments[arguments.length - 1];
+    const date = arguments[0];
+    const location = arguments[1];
+    (async () => {
+      try {
+        // 1. 天候を取得
+        const wRes = await fetch(`/api/weather?date=${date}&location=${encodeURIComponent(location)}`);
+        if (!wRes.ok) { cb({ok:false, step:'weather', status:wRes.status}); return; }
+        const w = await wRes.json();
+        if (!w || !w.weather) { cb({ok:false, step:'weather-empty'}); return; }
+
+        // 2. その日の dailySales を取得（無ければ登録対象なしでスキップ）
+        const dRes = await fetch(`/api/firestore/dailySales?date=${date}`);
+        if (!dRes.ok) { cb({ok:false, step:'dailySales-get', status:dRes.status}); return; }
+        const dData = await dRes.json();
+        const ds = dData.dailySale;
+        if (!ds) { cb({ok:false, step:'no-dailySales', weather:w.weather}); return; }
+
+        // 3. 天候を付与して addOrUpdate（上書き）
+        const pRes = await fetch('/api/firestore/dailySales', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'addOrUpdate',
+            date: date,
+            salesData: ds.salesData || ds.sales || [],
+            unregisteredCount: ds.unregisteredCount || 0,
+            customerInfo: ds.customerInfo,
+            weather: w.weather
+          })
+        });
+        cb({ok: pRes.ok, step:'done', weather:w.weather, desc:w.description});
+      } catch (e) {
+        cb({ok:false, step:'exception', error:String(e)});
+      }
+    })();
+    """
+    try:
+        # 非同期スクリプトのタイムアウトを設定
+        driver.set_script_timeout(30)
+        result = driver.execute_async_script(
+            script, sales_date, config.WEATHER_LOCATION
+        )
+        if result and result.get("ok"):
+            logger.info(
+                "天候を登録しました: %s (%s) %s",
+                sales_date,
+                result.get("weather"),
+                result.get("desc", ""),
+            )
+        else:
+            logger.warning(
+                "天候登録をスキップ/失敗: %s detail=%s", sales_date, result
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("天候登録でエラー（続行）: %s", e)
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True, help="アップロードするCSVパス")
+    parser.add_argument("--date", help="売上日 YYYY-MM-DD（未指定はファイル名から）")
     args = parser.parse_args()
 
-    count = upload_csv(args.file)
+    count = upload_csv(args.file, sales_date=args.date)
     print(f"Imported: {count}")
 
 

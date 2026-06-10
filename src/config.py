@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
     "timezone": "Asia/Tokyo",
     "lastRunDate": "",          # "YYYY-MM-DD"
     "forceRun": False,          # admin画面からの手動トリガ
+    "runDate": "",              # 指定日実行の対象日("YYYY-MM-DD")。空なら当日
 }
 
 # scheduledTime と現在時刻の許容ずれ(分)。cronが10分毎なので window は cron間隔以上にする
@@ -72,6 +73,12 @@ UPLOAD_PASSWORD = os.environ.get("IPO_UPLOAD_PASSWORD", "")
 UPLOAD_FILE_INPUT_CSS = 'input[type="file"][accept=".csv"]:not([multiple])'
 # アップロード成功を示すテキスト（SalesUploader.svelte より）
 UPLOAD_SUCCESS_TEXT = "件の売上データをインポートしました"
+
+# 天候情報の取得地（WeatherAPI.com / 投入先 /api/weather の location 既定と一致）
+WEATHER_LOCATION = os.environ.get("WEATHER_LOCATION", "Izumi, Osaka, Japan")
+
+# AirREGI 日付指定: readonly datepicker の input（値形式 "YYYY/MM/DD ~ YYYY/MM/DD"）
+AIRREGI_DATE_INPUT_CSS = "div.input-date input[type='text']"
 
 # ===== Selenium 全般 =====
 HEADLESS = os.environ.get("HEADLESS", "true").lower() != "false"

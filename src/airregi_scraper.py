@@ -241,6 +241,10 @@ def download_csv(date_str: str) -> str:
 
         wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
 
+        # 対象日を datepicker に設定（バリエーション切替前に行い、
+        # _select_variation_unit 内の「表示する」でまとめて再集計させる）
+        _set_date_range(driver, wait, date_str)
+
         # 集計単位を「バリエーション単位」に切り替えてから再表示する。
         # （既定は商品単位。投入先はバリエーション別CSVを期待）
         _select_variation_unit(driver, wait)
@@ -285,6 +289,44 @@ def download_csv(date_str: str) -> str:
         return target
     finally:
         driver.quit()
+
+
+def _set_date_range(driver, wait, date_str: str) -> None:
+    """datepicker に対象日(YYYY-MM-DD)を単日範囲として設定する。
+
+    AirREGIの日付入力は readonly のため send_keys 不可。
+    JSで value を "YYYY/MM/DD ~ YYYY/MM/DD" に書き換え、change/inputを発火する。
+    既定が当日なので、当日処理なら設定不要だが、明示設定で過去日も指定可能にする。
+    """
+    slash = date_str.replace("-", "/")
+    range_value = f"{slash} ~ {slash}"
+    try:
+        date_input = wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, config.AIRREGI_DATE_INPUT_CSS)
+            )
+        )
+        current = date_input.get_attribute("value") or ""
+        if current.strip() == range_value:
+            logger.info("日付は既に対象日: %s", range_value)
+            return
+        driver.execute_script(
+            """
+            const el = arguments[0], val = arguments[1];
+            const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value').set;
+            setter.call(el, val);
+            el.dispatchEvent(new Event('input', {bubbles: true}));
+            el.dispatchEvent(new Event('change', {bubbles: true}));
+            """,
+            date_input,
+            range_value,
+        )
+        logger.info("日付を設定: %s", range_value)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "日付設定に失敗（当日のまま続行の可能性）: %s", e
+        )
 
 
 def _select_variation_unit(driver, wait) -> None:
