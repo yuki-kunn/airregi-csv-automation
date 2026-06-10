@@ -399,35 +399,52 @@ def _dump_calendar_diagnostics(driver, target_ym: str, target_day: int) -> None:
 
 
 def _click_calendar_day(driver, target_dt) -> bool:
-    """カレンダー上で対象日のセルをクリックする。年月ナビゲーション込み。"""
-    import time
+    """カレンダー上で対象日のセルをクリックする。年月ナビゲーション込み。
 
-    target_day = target_dt.day
-    # 最大12回まで「前月」ボタンで遡る（過去日想定）
-    for _ in range(12):
-        # 当月内の対象日セルを探す（disabledや別月のセルは除外したい）
-        cells = driver.find_elements(
+    実DOM（AirREGIの datepicker-container）:
+      <table class="dates-table">
+        <tr class="movement"><td>«</td><td class="switch">2026年06月</td><td>»</td></tr>
+        ...
+        <tr class="week"><td class="old"><div>31</div></td><td><div>1</div></td>...
+    - 当月セルは class に 'old'(前月)/'new'(翌月) を含まない <td><div>N</div></td>
+    - 月ラベルは td.switch、前月は « 、翌月は »
+    """
+    target_day = str(target_dt.day)
+    target_label = f"{target_dt.year}年{target_dt.month:02d}月"
+
+    for _ in range(14):
+        # 現在表示中の年月ラベル
+        labels = driver.find_elements(By.CSS_SELECTOR, "td.switch")
+        current_label = labels[0].text.strip() if labels else ""
+
+        if current_label == target_label:
+            # 当月の対象日セル（old/new を除外、div内テキスト一致）
+            cells = driver.find_elements(
+                By.XPATH,
+                "//table[contains(@class,'dates-table')]"
+                "//td[not(contains(@class,'old')) and not(contains(@class,'new')) "
+                "and not(contains(@class,'disabled'))]"
+                f"/div[normalize-space(text())='{target_day}']",
+            )
+            if cells:
+                try:
+                    driver.execute_script("arguments[0].click();", cells[0])
+                    return True
+                except Exception:  # noqa: BLE001
+                    return False
+            return False
+
+        # 目的月へ移動。target が現在より過去なら « 、未来なら »
+        go_prev = target_label < current_label if current_label else True
+        arrow = "«" if go_prev else "»"
+        nav = driver.find_elements(
             By.XPATH,
-            f"//td[normalize-space(text())='{target_day}' and "
-            f"not(contains(@class,'disabled')) and not(contains(@class,'other'))]"
-            f" | //*[contains(@class,'day') and normalize-space(text())='{target_day}'"
-            f" and not(contains(@class,'disabled')) and not(contains(@class,'other'))]",
+            f"//tr[contains(@class,'movement')]/td[normalize-space(text())='{arrow}']",
         )
-        if cells:
-            try:
-                driver.execute_script("arguments[0].click();", cells[0])
-                return True
-            except Exception:  # noqa: BLE001
-                pass
-        # 前月へ（prevボタン候補を広く探す）
-        prev = driver.find_elements(
-            By.CSS_SELECTOR,
-            "[class*='prev'], [class*='Prev'], [aria-label*='前'], [class*='left']",
-        )
-        if not prev:
+        if not nav:
             break
         try:
-            driver.execute_script("arguments[0].click();", prev[0])
+            driver.execute_script("arguments[0].click();", nav[0])
             time.sleep(0.6)
         except Exception:  # noqa: BLE001
             break
