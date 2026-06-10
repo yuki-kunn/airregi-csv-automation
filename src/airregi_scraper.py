@@ -353,9 +353,22 @@ def _set_date_range(driver, wait, date_str: str) -> bool:
             return False
 
         time.sleep(1)
-        # 単日選択: 終了日も同じ日をクリック（範囲ピッカーの場合）
+        # 範囲ピッカー: 開始日=終了日として同じ日をもう一度クリック
+        # （「※開始日と終了日をタッチで選択してください」）
         _click_calendar_day(driver, target_dt)
         time.sleep(1)
+
+        # 「確定」ボタンを押す（これを押すまで input value に反映されない）
+        confirm = driver.find_elements(By.CSS_SELECTOR, "button.btn-confirm")
+        if confirm:
+            try:
+                _fire_full_click(driver, confirm[0])
+                logger.info("「確定」ボタンを押しました")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("確定ボタン押下に失敗: %s", e)
+        else:
+            logger.warning("確定ボタンが見つかりませんでした")
+        time.sleep(1.5)
 
         # 反映確認: input value が対象日(単日範囲)になっているか
         new_val = (date_input.get_attribute("value") or "").strip()
