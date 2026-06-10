@@ -154,3 +154,32 @@ CSVボタン名は「商品単位の売上(CSV)」のままだが、選択中の
 **注意**: datepicker の value 書換がウィジェット内部状態に反映されない場合は、
 debug_page.html を見てカレンダークリック方式へ切替が必要。
 天候APIは WeatherAPI.com 無料プランで履歴取得可（過去日OK、未来は3日先まで）。
+
+---
+
+## 10. 指定日が反映されず当日データが取れる（重要）
+
+**症状**: runDate を指定しても当日のCSVが取得され、間違った日付で登録される。
+
+**原因（3段階で判明）**:
+1. datepicker の `<input readonly>` の value をJSで書き換えても、AirREGIの
+   内部状態（React）に反映されない。
+2. カレンダーセル `<td><div>8</div></td>` を `execute_script("click()")` しても
+   ReactのonClickが発火しない（合成イベント非対応）。
+   → `pointerdown/mousedown/mouseup/click` のネイティブイベント列を発火して解決。
+3. **それでも反映されない**: カレンダーに「確定」ボタン(`button.btn-confirm`)があり、
+   日付を選んでも**確定を押すまで input value に反映されない**仕様だった。
+
+**正しいフロー**（`_set_date_range`）:
+1. datepicker を開く（input/icon クリック）
+2. 目的月へ « / » でナビ（月ラベル `td.switch` を比較）
+3. 当月の対象日セル `td:not(.old):not(.new) > div[text=N]` にネイティブイベント列を発火
+   （開始日=終了日として2回。「※開始日と終了日をタッチで選択」）
+4. **「確定」ボタン(`button.btn-confirm`)を押す** ← これが必須
+5. input value が "YYYY/MM/DD ~ YYYY/MM/DD" になったか検証
+
+**安全策**: input value が対象日にならなければ `RuntimeError` で中断
+（当日データを誤った日付で登録する事故を防ぐ）。
+
+**検証**: 6/8指定で8件(当日は1件)取得・weather=rainy登録を確認。
+カレンダー構造調査は debug_calendar.html（artifact）を参照。
