@@ -426,12 +426,26 @@ def _click_calendar_day(driver, target_dt) -> bool:
                 "and not(contains(@class,'disabled'))]"
                 f"/div[normalize-space(text())='{target_day}']",
             )
+            logger.info(
+                "対象月%s 日付セル(%s)候補: %d個", target_label, target_day, len(cells)
+            )
             if cells:
-                try:
-                    driver.execute_script("arguments[0].click();", cells[0])
-                    return True
-                except Exception:  # noqa: BLE001
-                    return False
+                # 親td をクリック対象にする（divよりtdの方がハンドラを持つことが多い）
+                td = cells[0].find_element(By.XPATH, "./..")
+                for target_el in (td, cells[0]):
+                    try:
+                        target_el.click()  # 実クリック
+                        logger.info("日付セルを実クリックしました")
+                        return True
+                    except Exception as e1:  # noqa: BLE001
+                        logger.info("実クリック失敗(%s)、JSクリック試行", e1)
+                        try:
+                            driver.execute_script("arguments[0].click();", target_el)
+                            logger.info("日付セルをJSクリックしました")
+                            return True
+                        except Exception:  # noqa: BLE001
+                            continue
+                return False
             return False
 
         # 目的月へ移動。target が現在より過去なら « 、未来なら »
