@@ -188,16 +188,17 @@ debug_page.html を見てカレンダークリック方式へ切替が必要。
 
 ## 11. Netscape形式cookies.txtでログイン失敗
 
-**症状**: 新しく登録したCookieでも (show_sess_failure)。
-admin画面のCookie名一覧に  や (ドメイン)が並ぶ。
+**症状**: 新しく登録したCookieでも `LoginExpiredError`（show_sess_failure）。
+admin画面のCookie名一覧に `# https://curl.haxx.se/...` やドメイン名(`.airregi.jp`)が並ぶ。
 
 **原因**: Cookie-Editor等で **Netscape形式(cookies.txt)** でエクスポートしたものを貼り付け。
 パーサがDevTools表/JSONしか対応しておらず、Cookie名・値が取れていなかった。
 （Cookie自体は有効だったのにパース失敗でログインできていなかった）
 
-**対処**:  を追加。Netscape形式を検出（# Netscape /
-cookie_spec.html / generated file）して、7列タブ区切り
- をパース。プレフィクスも対応。
+**対処**: `_parse_netscape_cookies()` を追加。Netscape形式を検出（`# Netscape` /
+`cookie_spec.html` / `generated file`）して、7列タブ区切り
+`domain  flag  path  secure  expiry  name  value` をパース。`#HttpOnly_` プレフィクスも対応。
+admin側 `summarize()` も同様に対応（件数表示用）。
 
 **教訓**: Cookieの貼り付け形式は複数ありうる（DevTools表 / JSON / Netscape txt）。
 ログイン失敗時は「失効」と決めつけず、パース結果（Cookie名一覧）を確認すること。
