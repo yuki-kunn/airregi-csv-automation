@@ -74,6 +74,7 @@ def parse_cookies(raw: str) -> list[dict]:
 
     対応形式:
       - JSON配列（Cookie-Editor / cookie_tool.py の出力）
+      - Netscape形式 cookies.txt（curl/wget。# コメント + 7列タブ区切り）
       - DevTools "Application > Cookies" の表をコピーしたタブ区切りテキスト
         （1行目ヘッダ: Name<TAB>Value<TAB>Domain<TAB>Path ...）
     """
@@ -87,6 +88,11 @@ def parse_cookies(raw: str) -> list[dict]:
         if isinstance(data, dict):
             data = [data]
         return [_normalize_cookie(c) for c in data if c.get("name")]
+
+    # Netscape形式 cookies.txt の判定
+    #   # コメント行 / 各データ行は: domain  flag  path  secure  expiry  name  value
+    if "# Netscape" in raw or "cookie_spec.html" in raw or "generated file" in raw:
+        return _parse_netscape_cookies(raw)
 
     # タブ/カンマ区切りテーブル
     lines = [ln for ln in raw.splitlines() if ln.strip()]
@@ -146,6 +152,43 @@ def parse_cookies(raw: str) -> list[dict]:
                     }
                 )
             )
+    return cookies
+
+
+def _parse_netscape_cookies(raw: str) -> list[dict]:
+    """Netscape形式 cookies.txt をパースする。
+
+    各データ行（タブ区切り7列）:
+      domain  include_subdomains  path  secure  expiry  name  value
+    # で始まる行はコメント。ただし #HttpOnly_ プレフィクス付き行はデータ。
+    """
+    cookies: list[dict] = []
+    for line in raw.splitlines():
+        line = line.rstrip("\n")
+        if not line.strip():
+            continue
+        # #HttpOnly_ プレフィクスはデータ行（プレフィクスを除去）
+        if line.startswith("#HttpOnly_"):
+            line = line[len("#HttpOnly_"):]
+        elif line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 7:
+            continue
+        domain, _subdom, path, _secure, expiry, name, value = parts[:7]
+        if not name:
+            continue
+        cookies.append(
+            _normalize_cookie(
+                {
+                    "name": name,
+                    "value": value,
+                    "domain": domain,
+                    "path": path or "/",
+                    "expiry": expiry,
+                }
+            )
+        )
     return cookies
 
 
