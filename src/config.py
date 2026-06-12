@@ -72,6 +72,10 @@ AIRREGI_LOGIN_PASSWORD_CSS = "input#password"  # name=password
 # 可視の送信ボタン（type=submit, 448x44）。フォームは id=command
 AIRREGI_LOGIN_SUBMIT_CSS = "form#command input[type='submit']"
 
+# ログイン後の店舗選択（複数店舗アカウントの場合 choose-store ページが出る）
+# 対象店舗名（部分一致でクリック対象を探す）
+AIRREGI_STORE_NAME = os.environ.get("AIRREGI_STORE_NAME", "CANVAS COFFEE")
+
 # ===== 投入先（IPO在庫・売上管理システム） =====
 UPLOAD_BASE_URL = "https://ipo-inventory-sales-management.vercel.app"
 UPLOAD_AUTH_LOCALSTORAGE_KEY = "ipo_authenticated"  # auth.ts と一致

@@ -381,6 +381,10 @@ def _login_with_credentials(driver) -> None:
     if config.AIRREGI_LOGIN_HOST in driver.current_url and _detect_captcha(driver):
         raise CaptchaRequiredError("ログイン試行後にCAPTCHAが要求されました")
 
+    # 複数店舗アカウントの場合、店舗選択ページが出る
+    if "choose-store" in driver.current_url:
+        _select_store(driver)
+
     # 売上ページに到達できたか確認
     if not _is_logged_in(driver):
         raise LoginExpiredError(
@@ -388,6 +392,45 @@ def _login_with_credentials(driver) -> None:
             f"{driver.current_url}"
         )
     logger.info("直接ログイン成功")
+
+
+def _select_store(driver) -> None:
+    """店舗選択ページで対象店舗(config.AIRREGI_STORE_NAME)をクリックする。"""
+    target = config.AIRREGI_STORE_NAME
+    logger.info("店舗選択ページ: %s を選択します", target)
+    wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
+    try:
+        # 店舗名テキストを含むクリック可能な行/リンクを探す
+        el = wait.until(
+            EC.element_to_be_clickable(
+                (
+                    By.XPATH,
+                    f"//*[contains(normalize-space(text()),'{target}')]"
+                    f"/ancestor-or-self::*[self::a or self::button or self::li "
+                    f"or contains(@class,'store') or @role='button'][1]",
+                )
+            )
+        )
+        _fire_full_click(driver, el)
+        logger.info("店舗を選択しました: %s", target)
+        WebDriverWait(driver, config.PAGE_LOAD_TIMEOUT).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        time.sleep(2)
+    except Exception as e:  # noqa: BLE001
+        # フォールバック: 店舗名テキスト要素を直接クリック
+        try:
+            el = driver.find_element(
+                By.XPATH, f"//*[contains(normalize-space(text()),'{target}')]"
+            )
+            _fire_full_click(driver, el)
+            logger.info("店舗を選択（フォールバック）: %s", target)
+            time.sleep(2)
+        except Exception:  # noqa: BLE001
+            logger.warning("店舗選択に失敗: %s", e)
+            raise LoginExpiredError(
+                f"店舗選択ページで '{target}' を選択できませんでした"
+            )
 
 
 def _load_session(driver) -> None:
