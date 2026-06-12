@@ -1,10 +1,13 @@
-name: ログインページ調査（一時・手動）
+name: ログイン疎通テスト（手動）
+
+# 直接ログイン(ID/PASS→店舗選択→売上ページ到達)を Firestore 不使用で検証する。
+# クォータ超過中でも実行可能。結果スクショを artifact に保存。
 
 on:
   workflow_dispatch:
 
 jobs:
-  probe:
+  login-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -18,26 +21,20 @@ jobs:
         with:
           chrome-version: stable
           install-chromedriver: true
-      - name: Probe login page
-        env:
-          HEADLESS: 'true'
-        run: python src/login_probe.py
       - name: Test direct login
         env:
           HEADLESS: 'true'
           LOGIN_MODE: 'direct'
           AIRREGI_ID: ${{ secrets.AIRREGI_ID }}
           AIRREGI_PASS: ${{ secrets.AIRREGI_PASS }}
+          AIRREGI_STORE_NAME: 'CANVAS COFFEE'
         run: python src/login_test.py
-        continue-on-error: true
-      - name: Upload login page artifacts
+      - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: login-page
+          name: login-test
           path: |
-            downloads/login_page.html
-            downloads/login_page.png
             downloads/login_test_ok.png
             downloads/login_test_fail.png
             downloads/login_test_captcha.png

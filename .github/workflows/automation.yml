@@ -43,9 +43,13 @@ jobs:
           HEADLESS: 'true'
           FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY }}
           FIREBASE_ADMIN_PROJECT_ID: ${{ secrets.FIREBASE_ADMIN_PROJECT_ID }}
-          AIRREGI_COOKIES: ${{ secrets.AIRREGI_COOKIES }}
           IPO_UPLOAD_PASSWORD: ${{ secrets.IPO_UPLOAD_PASSWORD }}
           SCHEDULE_WINDOW_MINUTES: '10'
+          # ログイン: 直接ログイン優先、失敗時はCookieにフォールバック
+          LOGIN_MODE: 'auto'
+          AIRREGI_ID: ${{ secrets.AIRREGI_ID }}
+          AIRREGI_PASS: ${{ secrets.AIRREGI_PASS }}
+          AIRREGI_COOKIES: ${{ secrets.AIRREGI_COOKIES }}
         run: python src/run.py
 
       # 失敗時の診断ファイル（debug_page.html / .png）を回収

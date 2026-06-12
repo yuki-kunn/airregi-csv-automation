@@ -71,25 +71,19 @@ cat service-account.json | base64 -w0
 # → FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY に設定
 ```
 
-### 3. AirREGI Cookie の登録（admin画面から / 推奨）
+### 3. AirREGI ログイン方式
 
-AirREGIは Recruit ID / OAuth ログインで、自動ログインは CAPTCHA / 2段階認証で
-詰まるリスクが高い。そのため **一度だけ人がブラウザでログインして Cookie を登録** する。
-登録は **admin画面 `/admin` の「AirREGI ログインCookie」** から行う（Firestoreに保存され、
-run.py が自動で読む）。
+**直接ログイン方式（推奨・既定）**: ID/PASSから毎回自動ログインする。Cookie失効の手間が無い。
+`LOGIN_MODE=auto` で、直接ログイン → 失敗時のみCookie方式にフォールバック。
 
-**手順（Windowsの普段使いブラウザでOK・WSLのGUI不要）:**
+ログインフォームには **honeypot（ダミー入力欄 dummy01-04）** が仕込まれているが、
+本物の `#account`/`#password` のみを id 厳密指定で操作するため安全。
+複数店舗アカウントの場合はログイン後に店舗選択（`AIRREGI_STORE_NAME`、既定 `CANVAS COFFEE`）。
 
-1. [AirREGI売上ページ](https://airregi.jp/CLP/view/salesListByMenu/) を開いてログイン
-2. `F12`（開発者ツール）→「Application」タブ →「Cookies」
-3. `https://airregi.jp` と `https://connect.airregi.jp` の両方の行を全選択コピー
-4. admin画面 `/admin` の「AirREGI ログインCookie」欄に貼り付けて「保存」
+> CAPTCHA/画像認証が要求された場合は検知して中断・`failed`ログを残す（手動対応）。
 
-> Cookie-Editor 等の拡張機能でエクスポートした **JSON配列**も貼り付け可能。
-> Cookieが失効すると `failed` ログが出るので、その時は同じ手順で再登録する。
-
-> **代替（WSL GUIが使える場合）**: `HEADLESS=false python src/cookie_tool.py` で
-> ブラウザログイン → 出力JSONを admin画面 or `AIRREGI_COOKIES` に設定。
+**Cookie方式（フォールバック）**: 直接ログインが使えない場合、admin画面 `/admin` の
+「AirREGI ログインCookie」からDevToolsでコピーしたCookieを登録（DevTools表/JSON/Netscape対応）。
 
 ### 4. GitHub Secrets
 
@@ -100,9 +94,11 @@ run.py が自動で読む）。
 | `FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY` | サービスアカウントJSON(Base64) |
 | `FIREBASE_ADMIN_PROJECT_ID` | `ipo-kaidashi` |
 | `IPO_UPLOAD_PASSWORD` | 投入先のログインパスワード |
+| `AIRREGI_ID` | AirREGIのAirID（例 `cooon0201-cafe`） |
+| `AIRREGI_PASS` | AirREGIのパスワード |
 
-> **Cookieは Secrets 不要**: admin画面から Firestore に登録するため、
-> `AIRREGI_COOKIES` の Secret 登録は任意（ローカル実行時のフォールバック用）。
+> `AIRREGI_COOKIES` は Cookie フォールバック用（任意）。直接ログインが動けば不要。
+> ログイン疎通は `login_test.yml`（手動ワークフロー）で確認できる。
 
 ### 5. デプロイ
 

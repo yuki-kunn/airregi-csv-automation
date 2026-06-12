@@ -202,3 +202,32 @@ admin側 `summarize()` も同様に対応（件数表示用）。
 
 **教訓**: Cookieの貼り付け形式は複数ありうる（DevTools表 / JSON / Netscape txt）。
 ログイン失敗時は「失効」と決めつけず、パース結果（Cookie名一覧）を確認すること。
+
+---
+
+## 12. 直接ログイン方式（ID/PASS自動ログイン）
+
+**目的**: Cookie失効の手間をなくすため、ID/PASSから毎回自動ログインする。
+
+**ログインフォームの罠（login_probe.py で実DOM調査）**:
+- **本物**: `input#account`(username) / `input#password` / 可視の `input[type=submit]`
+- **ダミー(honeypot)**: `input[name=dummy01..04]`(0×0不可視) / `input#ellipsis`(opacity:0)
+  → id厳密指定で本物のみ操作し、ダミーには構造的に触れない。
+- `captchaRequired` hidden 存在 → 連続失敗等でCAPTCHA要求の可能性。検知して中断。
+
+**実装フロー**（`_login_with_credentials`）:
+1. `#account`/`#password` に入力 → 入力値を検証（pass長一致確認）
+2. 可視 submit をクリック
+3. **店舗選択**: 複数店舗アカウントは `choose-store` ページが出る。
+   `AIRREGI_STORE_NAME`(既定 CANVAS COFFEE)の行をクリック（`_select_store`）。
+4. 売上ページ到達を確認
+
+**ハマりどころ**:
+- パスワード誤り → URL `login_failed=true` + 「パスワードが登録情報と一致しません」。
+  入力検証ログ（pass長）で、入力ミスか値の誤りか切り分け可能。
+- ログイン成功でも複数店舗だと `choose-store` で止まる → 店舗選択が必須。
+
+**LOGIN_MODE**: `direct`(直接のみ) / `cookie`(Cookieのみ) / `auto`(直接→失敗時Cookie)。
+本番(automation.yml)は `auto`。Secrets: `AIRREGI_ID` / `AIRREGI_PASS`。
+
+**検証**: login_test.py（Firestore不使用）でログイン→店舗選択→売上ページ到達を確認。
