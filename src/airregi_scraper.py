@@ -324,21 +324,58 @@ def _login_with_credentials(driver) -> None:
     )
     pass_el = driver.find_element(By.CSS_SELECTOR, config.AIRREGI_LOGIN_PASSWORD_CSS)
 
+    # クリック（フォーカス）してから1文字ずつ入力（JS入力検知の回避）
+    user_el.click()
     user_el.clear()
     user_el.send_keys(config.AIRREGI_ID)
+    time.sleep(0.5)
+    pass_el.click()
     pass_el.clear()
     pass_el.send_keys(config.AIRREGI_PASS)
-    logger.info("ログイン情報を入力しました（id=account/password のみ）")
+    time.sleep(0.5)
+
+    # 入力値の検証（パスワードは長さのみ。値が確定しているか確認）
+    actual_user = user_el.get_attribute("value") or ""
+    actual_pass_len = len(pass_el.get_attribute("value") or "")
+    logger.info(
+        "入力確認: user=%r pass長=%d (期待pass長=%d)",
+        actual_user,
+        actual_pass_len,
+        len(config.AIRREGI_PASS),
+    )
+    if actual_user != config.AIRREGI_ID or actual_pass_len != len(config.AIRREGI_PASS):
+        logger.warning("入力値が期待と不一致。再入力を試みます")
+        user_el.clear()
+        user_el.send_keys(config.AIRREGI_ID)
+        pass_el.clear()
+        pass_el.send_keys(config.AIRREGI_PASS)
+        time.sleep(0.5)
 
     # 可視の送信ボタンをクリック
     submit = driver.find_element(By.CSS_SELECTOR, config.AIRREGI_LOGIN_SUBMIT_CSS)
+    logger.info("送信ボタン: text=%r enabled=%s", submit.get_attribute("value"), submit.is_enabled())
     submit.click()
 
     # 遷移待ち
     WebDriverWait(driver, config.PAGE_LOAD_TIMEOUT).until(
         lambda d: d.execute_script("return document.readyState") == "complete"
     )
-    time.sleep(2)
+    time.sleep(3)
+    logger.info("送信後URL: %s", driver.current_url)
+
+    # エラーメッセージがあれば取得（パスワード誤り等の判別）
+    try:
+        err = driver.find_elements(
+            By.XPATH,
+            "//*[contains(@class,'error') or contains(@class,'alert') "
+            "or contains(@class,'message')]",
+        )
+        for e in err[:3]:
+            t = (e.text or "").strip()
+            if t:
+                logger.info("ページメッセージ: %r", t[:80])
+    except Exception:  # noqa: BLE001
+        pass
 
     # ログイン後にCAPTCHAが要求されたら中断
     if config.AIRREGI_LOGIN_HOST in driver.current_url and _detect_captcha(driver):
