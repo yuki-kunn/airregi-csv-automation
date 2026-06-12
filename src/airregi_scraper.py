@@ -31,6 +31,10 @@ class LoginExpiredError(RuntimeError):
     """Cookieが失効しAirREGIに未ログインだった場合に送出。"""
 
 
+class CaptchaRequiredError(RuntimeError):
+    """ログイン時にCAPTCHA/画像認証が要求された場合に送出（中断・報告用）。"""
+
+
 def _load_cookies() -> list[dict]:
     """Cookieを取得する。優先順位:
     1. Firestore automation/config.airregiCookies（admin画面で登録）
@@ -254,6 +258,137 @@ def _verify_logged_in(driver) -> None:
     logger.info("AirREGIログイン確認OK: %s", current)
 
 
+def _is_logged_in(driver) -> bool:
+    """売上ページに到達できていれば True（例外を投げない判定版）。"""
+    try:
+        _verify_logged_in(driver)
+        return True
+    except LoginExpiredError:
+        return False
+
+
+def _detect_captcha(driver) -> bool:
+    """ログインページにCAPTCHA/画像認証が出ているか検知する。"""
+    try:
+        # captchaRequired hidden が "true"、または画像認証要素/テキストの存在
+        val = driver.execute_script(
+            "var e=document.querySelector(\"input[name='captchaRequired']\");"
+            "return e ? e.value : '';"
+        )
+        if str(val).lower() == "true":
+            return True
+        markers = driver.find_elements(
+            By.XPATH,
+            "//*[contains(text(),'画像認証') or contains(text(),'認証コード') "
+            "or contains(text(),'captcha') or contains(text(),'CAPTCHA')]"
+            " | //img[contains(@src,'captcha')] | //*[contains(@class,'captcha')]",
+        )
+        return len(markers) > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _login_with_credentials(driver) -> None:
+    """ID/PASSで直接ログインする。
+
+    login_probe.py の実DOM調査に基づき、本物の #account / #password のみ操作。
+    dummy01-04(0x0) / #ellipsis(opacity:0) には一切触れない。
+    CAPTCHA検知時は CaptchaRequiredError を送出して中断（リトライしない）。
+    """
+    if not config.AIRREGI_ID or not config.AIRREGI_PASS:
+        raise LoginExpiredError("AIRREGI_ID / AIRREGI_PASS が未設定です")
+
+    # ログインページへ（売上ページ get → 未ログインならリダイレクト）
+    driver.get(config.AIRREGI_SALES_URL)
+    WebDriverWait(driver, config.PAGE_LOAD_TIMEOUT).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+    if config.AIRREGI_LOGIN_HOST not in driver.current_url and (
+        "/view/login" not in driver.current_url
+    ):
+        # 既にログイン済み（Cookie等で）なら何もしない
+        logger.info("既にログイン済み: %s", driver.current_url)
+        return
+
+    wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
+
+    # 入力前にCAPTCHAが既に出ていないか
+    if _detect_captcha(driver):
+        raise CaptchaRequiredError("ログインページにCAPTCHAが表示されています")
+
+    # 本物のユーザー名・パスワード欄のみ（id厳密指定）
+    user_el = wait.until(
+        EC.presence_of_element_located(
+            (By.CSS_SELECTOR, config.AIRREGI_LOGIN_USERNAME_CSS)
+        )
+    )
+    pass_el = driver.find_element(By.CSS_SELECTOR, config.AIRREGI_LOGIN_PASSWORD_CSS)
+
+    user_el.clear()
+    user_el.send_keys(config.AIRREGI_ID)
+    pass_el.clear()
+    pass_el.send_keys(config.AIRREGI_PASS)
+    logger.info("ログイン情報を入力しました（id=account/password のみ）")
+
+    # 可視の送信ボタンをクリック
+    submit = driver.find_element(By.CSS_SELECTOR, config.AIRREGI_LOGIN_SUBMIT_CSS)
+    submit.click()
+
+    # 遷移待ち
+    WebDriverWait(driver, config.PAGE_LOAD_TIMEOUT).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+    time.sleep(2)
+
+    # ログイン後にCAPTCHAが要求されたら中断
+    if config.AIRREGI_LOGIN_HOST in driver.current_url and _detect_captcha(driver):
+        raise CaptchaRequiredError("ログイン試行後にCAPTCHAが要求されました")
+
+    # 売上ページに到達できたか確認
+    if not _is_logged_in(driver):
+        raise LoginExpiredError(
+            f"直接ログイン後も未ログイン（ID/PASS誤り or 検知の可能性）: "
+            f"{driver.current_url}"
+        )
+    logger.info("直接ログイン成功")
+
+
+def _load_session(driver) -> None:
+    """ログインセッションを確立する。
+
+    LOGIN_MODE:
+      - "direct": 直接ログインのみ
+      - "cookie": Cookie再利用のみ
+      - "auto"(既定): 直接ログイン→CAPTCHAは即中断、その他失敗はCookieにフォールバック
+    """
+    mode = config.LOGIN_MODE
+
+    if mode == "cookie":
+        cookies = _load_cookies()
+        _inject_cookies(driver, cookies)
+        _verify_logged_in(driver)
+        return
+
+    if mode == "direct":
+        _login_with_credentials(driver)
+        return
+
+    # auto: 直接ログインを試行
+    try:
+        _login_with_credentials(driver)
+        return
+    except CaptchaRequiredError:
+        # CAPTCHAは即中断・報告（フォールバックしない）
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.warning("直接ログイン失敗、Cookie方式にフォールバック: %s", e)
+
+    # Cookieフォールバック
+    cookies = _load_cookies()
+    _inject_cookies(driver, cookies)
+    _verify_logged_in(driver)
+
+
 def _wait_download(download_dir: str, before: set[str], timeout: int) -> str:
     """新規にダウンロードされた .csv ファイルパスを返す。"""
     deadline = time.time() + timeout
@@ -277,9 +412,8 @@ def download_csv(date_str: str) -> str:
 
     driver = create_driver(download_dir=download_dir)
     try:
-        cookies = _load_cookies()
-        _inject_cookies(driver, cookies)
-        _verify_logged_in(driver)
+        # ログインセッション確立（LOGIN_MODE: direct/cookie/auto）
+        _load_session(driver)
 
         before = set(glob.glob(os.path.join(download_dir, "*.csv")))
 

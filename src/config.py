@@ -62,6 +62,16 @@ AIRREGI_COOKIES_JSON = os.environ.get("AIRREGI_COOKIES", "")
 AIRREGI_ID = os.environ.get("AIRREGI_ID", "")
 AIRREGI_PASS = os.environ.get("AIRREGI_PASS", "")
 
+# ログイン方式: "direct"(ID/PASS自動ログイン) / "cookie"(Cookie再利用) / "auto"(直接→失敗時Cookie)
+LOGIN_MODE = os.environ.get("LOGIN_MODE", "auto").lower()
+
+# ログインフォームのセレクタ（login_probe.py で実DOM確認済み）
+#   本物のみ id で厳密指定。dummy01-04(0x0) / #ellipsis(opacity:0) には触れない。
+AIRREGI_LOGIN_USERNAME_CSS = "input#account"   # name=username
+AIRREGI_LOGIN_PASSWORD_CSS = "input#password"  # name=password
+# 可視の送信ボタン（type=submit, 448x44）。フォームは id=command
+AIRREGI_LOGIN_SUBMIT_CSS = "form#command input[type='submit']"
+
 # ===== 投入先（IPO在庫・売上管理システム） =====
 UPLOAD_BASE_URL = "https://ipo-inventory-sales-management.vercel.app"
 UPLOAD_AUTH_LOCALSTORAGE_KEY = "ipo_authenticated"  # auth.ts と一致

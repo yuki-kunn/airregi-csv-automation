@@ -22,6 +22,14 @@ jobs:
         env:
           HEADLESS: 'true'
         run: python src/login_probe.py
+      - name: Test direct login
+        env:
+          HEADLESS: 'true'
+          LOGIN_MODE: 'direct'
+          AIRREGI_ID: ${{ secrets.AIRREGI_ID }}
+          AIRREGI_PASS: ${{ secrets.AIRREGI_PASS }}
+        run: python src/login_test.py
+        continue-on-error: true
       - name: Upload login page artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -30,5 +38,8 @@ jobs:
           path: |
             downloads/login_page.html
             downloads/login_page.png
+            downloads/login_test_ok.png
+            downloads/login_test_fail.png
+            downloads/login_test_captcha.png
           if-no-files-found: ignore
           retention-days: 3
