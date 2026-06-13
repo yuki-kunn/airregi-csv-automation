@@ -127,14 +127,35 @@ def _reprocess_inventory(driver, sales_date: str) -> None:
     import time
 
     try:
+        # レシピは Notion API(/api/notion/recipes)から非同期ロードされる。
+        # ロード前に再計算すると全商品が「未登録」扱いになり在庫が減らないため、
+        # 先にレシピAPIを叩いてロード完了＆件数>0 を確認してからページを開く。
+        recipe_count = driver.execute_async_script(
+            """
+            const cb = arguments[arguments.length - 1];
+            fetch('/api/notion/recipes')
+              .then(r => r.json())
+              .then(d => cb((d.recipes || d || []).length))
+              .catch(() => cb(-1));
+            """
+        )
+        logger.info("レシピ件数: %s", recipe_count)
+        if not recipe_count or recipe_count <= 0:
+            logger.warning(
+                "レシピが取得できないため在庫再計算をスキップ（在庫未反映）: %s",
+                sales_date,
+            )
+            return
+
         driver.get(f"{config.UPLOAD_BASE_URL}/calendar/{sales_date}")
         wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
         wait.until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
-        time.sleep(2)  # データ・レシピのロード待ち
+        # レシピ store がページ内でロードされるのを十分待つ（Notion API経由で遅い）
+        time.sleep(8)
 
-        # confirm ダイアログを自動承認するよう上書き（再計算は confirm を出す）
+        # confirm/alert ダイアログを自動承認
         driver.execute_script("window.confirm = function(){return true;};")
         driver.execute_script("window.alert = function(){};")
 
@@ -149,7 +170,7 @@ def _reprocess_inventory(driver, sales_date: str) -> None:
         driver.execute_script("arguments[0].click();", btns[0])
         logger.info("在庫再計算を実行しました: %s", sales_date)
         # 再計算（processSalesData→markAsProcessed）の完了を待つ
-        time.sleep(5)
+        time.sleep(6)
     except Exception as e:  # noqa: BLE001
         logger.warning("在庫再計算に失敗（続行）: %s", e)
 
