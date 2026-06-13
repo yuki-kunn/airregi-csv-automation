@@ -103,6 +103,11 @@ def upload_csv(csv_path: str, sales_date: str | None = None) -> int:
         imported = int(m.group(1)) if m else 0
         logger.info("アップロード成功: %s (%d件)", text, imported)
 
+        # 在庫を確実に反映させるため、その日付の再計算を実行する。
+        # （アップロード時はレシピ未ロードで在庫減算が空振りすることがあるため）
+        if sales_date:
+            _reprocess_inventory(driver, sales_date)
+
         # 天候を取得して dailySales に登録（同じブラウザのfetchでサイト内APIを叩く）
         if sales_date:
             _register_weather(driver, sales_date)
@@ -110,6 +115,43 @@ def upload_csv(csv_path: str, sales_date: str | None = None) -> int:
         return imported
     finally:
         driver.quit()
+
+
+def _reprocess_inventory(driver, sales_date: str) -> None:
+    """その日付のカレンダー詳細ページで「再計算」を実行し、在庫を反映させる。
+
+    手動の「再計算」ボタンと同じ処理（processSalesData→markAsProcessed）を走らせる。
+    既に反映済み(inventoryProcessed=true & 未登録0)ならボタンが無く、何もしない。
+    在庫は付随処理のため、失敗してもアップロード自体は成功扱い（警告のみ）。
+    """
+    import time
+
+    try:
+        driver.get(f"{config.UPLOAD_BASE_URL}/calendar/{sales_date}")
+        wait = WebDriverWait(driver, config.ELEMENT_WAIT_TIMEOUT)
+        wait.until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        time.sleep(2)  # データ・レシピのロード待ち
+
+        # confirm ダイアログを自動承認するよう上書き（再計算は confirm を出す）
+        driver.execute_script("window.confirm = function(){return true;};")
+        driver.execute_script("window.alert = function(){};")
+
+        # 「再計算」ボタンを探す（反映済みなら存在しない）
+        btns = driver.find_elements(
+            By.XPATH, "//button[contains(normalize-space(.),'再計算')]"
+        )
+        if not btns:
+            logger.info("再計算ボタンなし（既に在庫反映済み）: %s", sales_date)
+            return
+
+        driver.execute_script("arguments[0].click();", btns[0])
+        logger.info("在庫再計算を実行しました: %s", sales_date)
+        # 再計算（processSalesData→markAsProcessed）の完了を待つ
+        time.sleep(5)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("在庫再計算に失敗（続行）: %s", e)
 
 
 def _date_from_filename(csv_path: str) -> str | None:
