@@ -30,8 +30,13 @@ def _now_jst() -> datetime:
     return datetime.now(config.TIMEZONE)
 
 
-def _within_schedule(scheduled_time: str, now: datetime) -> bool:
-    """now が scheduled_time("HH:MM") ± SCHEDULE_WINDOW_MINUTES に入るか。"""
+def _is_past_scheduled(scheduled_time: str, now: datetime) -> bool:
+    """now が当日の scheduled_time("HH:MM") を過ぎているか。
+
+    GitHub Actions の cron は遅延・間引きが激しく「±窓」では取りこぼすため、
+    「今日まだ実行しておらず、予定時刻を過ぎていれば実行」する方式に変更。
+    起動が何時間遅れても、その日の最初の起動で必ず実行される。
+    """
     try:
         hh, mm = map(int, scheduled_time.split(":"))
     except ValueError:
@@ -39,7 +44,7 @@ def _within_schedule(scheduled_time: str, now: datetime) -> bool:
         return False
     scheduled_minutes = hh * 60 + mm
     now_minutes = now.hour * 60 + now.minute
-    return abs(now_minutes - scheduled_minutes) < config.SCHEDULE_WINDOW_MINUTES
+    return now_minutes >= scheduled_minutes
 
 
 def should_run(cfg: dict, now: datetime) -> tuple[bool, str]:
@@ -54,13 +59,15 @@ def should_run(cfg: dict, now: datetime) -> tuple[bool, str]:
     if cfg.get("lastRunDate") == today:
         return False, f"本日({today})は実行済み"
 
-    if not _within_schedule(cfg.get("scheduledTime", "09:00"), now):
+    scheduled = cfg.get("scheduledTime", "09:00")
+    if not _is_past_scheduled(scheduled, now):
         return False, (
-            f"実行予定時刻外 (now={now.strftime('%H:%M')}, "
-            f"scheduled={cfg.get('scheduledTime')})"
+            f"予定時刻前 (now={now.strftime('%H:%M')}, scheduled={scheduled})"
         )
 
-    return True, "スケジュール一致"
+    # 今日未実行 かつ 予定時刻を過ぎている → 実行
+    # (cron起動が遅延しても、その日の最初の起動で必ず拾える)
+    return True, f"スケジュール到達 (予定={scheduled}, 実行={now.strftime('%H:%M')})"
 
 
 def run_pipeline(date_str: str) -> tuple[int, str]:
