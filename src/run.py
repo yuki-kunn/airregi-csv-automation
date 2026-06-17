@@ -2,14 +2,21 @@
 エントリポイント（GitHub Actions が cron 10分毎に呼ぶ）
 
 フロー:
-  1. automation/config を読む（enabled / scheduledTime / lastRunDate / forceRun）
+  1. automation/config を読む（enabled / lastRunDate / forceRun）
   2. ゲート判定:
        - enabled でなければ skip
        - forceRun=true なら即実行（手動トリガ）
-       - そうでなければ「現在時刻(JST)が scheduledTime ± window 内」かつ
-         「lastRunDate != 今日」のときだけ実行
-  3. AirREGI から当日CSVをダウンロード → 投入先へアップロード
-  4. 結果を automation/logs に記録、lastRunDate を更新、forceRun を下ろす
+       - lastRunDate == today なら skip（当日すでに取得済み）
+       - それ以外は即実行（当日中に初めて起動した時点で前日分を取得）
+  3. 対象日 = 前日（runDate 指定がある場合はその日付）
+  4. AirREGI から対象日CSVをダウンロード → 投入先へアップロード
+  5. 結果を automation/logs に記録、lastRunDate(today)を更新、forceRun を下ろす
+
+設計ポリシー:
+  GitHub Actions 無料枠の cron は数時間単位の遅延・間引きが発生する。
+  「scheduledTime を過ぎたら実行」では深夜しか起動しない日に取りこぼす。
+  そのため時刻チェックを廃止し「当日まだ動いていなければ即実行」とする。
+  取得対象は「前日」なので、当日0:00〜23:59のいつ起動しても正しいデータが得られる。
 
 無限ループ防止: 例外は握りつぶさず failed ログに残して終了。
 同種エラーの連続再発（Cookie失効/CAPTCHA等）は admin画面のログで検知できる。
@@ -17,7 +24,7 @@
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import config
 import firestore_client as fs
@@ -28,23 +35,6 @@ logger = logging.getLogger("run")
 
 def _now_jst() -> datetime:
     return datetime.now(config.TIMEZONE)
-
-
-def _is_past_scheduled(scheduled_time: str, now: datetime) -> bool:
-    """now が当日の scheduled_time("HH:MM") を過ぎているか。
-
-    GitHub Actions の cron は遅延・間引きが激しく「±窓」では取りこぼすため、
-    「今日まだ実行しておらず、予定時刻を過ぎていれば実行」する方式に変更。
-    起動が何時間遅れても、その日の最初の起動で必ず実行される。
-    """
-    try:
-        hh, mm = map(int, scheduled_time.split(":"))
-    except ValueError:
-        logger.warning("scheduledTime の形式が不正: %s", scheduled_time)
-        return False
-    scheduled_minutes = hh * 60 + mm
-    now_minutes = now.hour * 60 + now.minute
-    return now_minutes >= scheduled_minutes
 
 
 def should_run(cfg: dict, now: datetime) -> tuple[bool, str]:
@@ -59,15 +49,9 @@ def should_run(cfg: dict, now: datetime) -> tuple[bool, str]:
     if cfg.get("lastRunDate") == today:
         return False, f"本日({today})は実行済み"
 
-    scheduled = cfg.get("scheduledTime", "09:00")
-    if not _is_past_scheduled(scheduled, now):
-        return False, (
-            f"予定時刻前 (now={now.strftime('%H:%M')}, scheduled={scheduled})"
-        )
-
-    # 今日未実行 かつ 予定時刻を過ぎている → 実行
-    # (cron起動が遅延しても、その日の最初の起動で必ず拾える)
-    return True, f"スケジュール到達 (予定={scheduled}, 実行={now.strftime('%H:%M')})"
+    # 時刻チェックなし: 当日中に初めて起動した時点で前日分を取得する
+    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    return True, f"当日初回起動 (実行={now.strftime('%H:%M')}, 対象日={yesterday})"
 
 
 def run_pipeline(date_str: str) -> tuple[int, str]:
@@ -86,12 +70,17 @@ def run_pipeline(date_str: str) -> tuple[int, str]:
     return imported, csv_path
 
 
-def _resolve_target_date(cfg: dict, today: str) -> str:
-    """対象日を決定する。runDate(指定日)があればそれ、無ければ当日。"""
+def _resolve_target_date(cfg: dict, now: datetime) -> tuple[str, bool]:
+    """対象日と「指定日かどうか」を返す。
+
+    runDate(指定日)があればその日、無ければ前日。
+    戻り値: (対象日 YYYY-MM-DD, is_specified)
+    """
     run_date = (cfg.get("runDate") or "").strip()
     if run_date:
-        return run_date
-    return today
+        return run_date, True
+    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    return yesterday, False
 
 
 def main() -> int:
@@ -107,8 +96,7 @@ def main() -> int:
         fs.add_log("skipped", message=reason, stage="done", run_at_iso=run_at_iso)
         return 0
 
-    target_date = _resolve_target_date(cfg, today)
-    is_specified = target_date != today
+    target_date, is_specified = _resolve_target_date(cfg, now)
     if is_specified:
         reason = f"{reason} / 指定日={target_date}"
     logger.info("実行します: %s (対象日=%s)", reason, target_date)
@@ -127,15 +115,14 @@ def main() -> int:
             stage=stage,
             run_at_iso=run_at_iso,
         )
-        # 当日処理のときだけ lastRunDate を更新（指定日実行で当日扱いを汚さない）
-        if not is_specified:
-            fs.set_last_run_date(today)
+        # 指定日実行の場合も lastRunDate を today で更新する
+        # （当日の自動取得は済んだとみなし、二重実行を防ぐ）
+        fs.set_last_run_date(today)
         _consume_triggers(cfg)
         logger.info("完了: %d件", imported)
         return 0
     except Exception as e:  # noqa: BLE001
         duration_ms = int((time.time() - started) * 1000)
-        # stage を例外発生箇所で推定（uploadは upload_csv 内）
         msg = f"{type(e).__name__}: {e}"
         logger.error("失敗: %s", msg, exc_info=True)
         fs.add_log(
