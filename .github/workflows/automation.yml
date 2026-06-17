@@ -7,6 +7,15 @@ on:
     - cron: '*/10 * * * *'
   # admin画面の「今すぐ実行」や手動確認用
   workflow_dispatch:
+    inputs:
+      run_date:
+        description: '対象日 (YYYY-MM-DD)。空なら当日'
+        required: false
+        default: ''
+      force_run:
+        description: '強制実行 (true/false)'
+        required: false
+        default: 'true'
 
 # 同時実行を防止（前回がまだ動いていたらスキップ）
 concurrency:
@@ -37,6 +46,29 @@ jobs:
         with:
           chrome-version: stable
           install-chromedriver: true
+
+      - name: Set forceRun / runDate (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_ADMIN_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_ADMIN_PROJECT_ID: ${{ secrets.FIREBASE_ADMIN_PROJECT_ID }}
+          DISPATCH_FORCE_RUN: ${{ github.event.inputs.force_run }}
+          DISPATCH_RUN_DATE: ${{ github.event.inputs.run_date }}
+        run: |
+          python - <<'EOF'
+          import sys, os
+          sys.path.insert(0, 'src')
+          import firestore_client as fs
+          updates = {}
+          if os.environ.get('DISPATCH_FORCE_RUN', '').lower() == 'true':
+              updates['forceRun'] = True
+          run_date = os.environ.get('DISPATCH_RUN_DATE', '').strip()
+          if run_date:
+              updates['runDate'] = run_date
+          if updates:
+              fs.update_config(updates)
+              print(f"Firestoreを更新しました: {updates}")
+          EOF
 
       - name: Run automation
         env:
